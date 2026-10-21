@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -112,6 +113,8 @@ def build(args):
                 "run",
                 "--rm",
                 "--network=none",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
                 "-v",
                 f"{work}:/work",
                 "-v",
