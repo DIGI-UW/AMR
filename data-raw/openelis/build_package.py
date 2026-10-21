@@ -18,7 +18,17 @@ ROOT = HERE.parents[1]
 R_IMAGE = (
     "r-base@sha256:fa1972f31def171b83e0911e947ab8b57db143f0fc8a67af4c0d5ac329041646"
 )
-FORMAT = "openelis-amr-reference/v1"
+FORMAT = "openelis-configuration/v1"
+CONFIGURATION_PATHS = {
+    "organisms.csv": "configuration/backend/microbiology-organisms/organisms.csv",
+    "antimicrobials.csv": "configuration/backend/microbiology-antimicrobials/antimicrobials.csv",
+    "breakpoints.csv": "configuration/backend/microbiology-breakpoints/breakpoints.csv",
+}
+
+
+def archive_path(name):
+    return CONFIGURATION_PATHS.get(name, "evidence/" + name)
+
 
 
 def sha256(data):
@@ -40,7 +50,8 @@ def package_files(directory, metadata):
         item = {"sha256": sha256(data), "bytes": len(data)}
         if name.endswith(".csv"):
             item["rows"] = len(list(csv.DictReader(io.StringIO(data.decode("utf-8")))))
-        files[name] = item
+        files[archive_path(name)] = item
+    payload = {archive_path(name): data for name, data in payload.items()}
     payload["manifest.json"] = canonical_json({**metadata, "files": files})
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
@@ -196,7 +207,7 @@ def build(args):
                 "mode": args.runtime,
                 "image": R_IMAGE if args.runtime == "docker" else None,
             },
-            "packageId": "amr-reference-" + args.package_version,
+            "packageId": "amr-reference",
             "packageVersion": args.package_version,
             "source": {
                 "repository": "https://github.com/DIGI-UW/AMR",

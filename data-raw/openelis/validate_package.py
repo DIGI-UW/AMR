@@ -8,6 +8,7 @@ import io
 import json
 import re
 import zipfile
+from build_package import archive_path, FORMAT
 
 FILES = {
     "organisms.csv",
@@ -46,16 +47,16 @@ def validate(content):
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         names = archive.namelist()
         require(
-            set(names) == FILES and len(names) == len(FILES),
+            set(names) == {archive_path(n) if n != "manifest.json" else n for n in FILES} and len(names) == len(FILES),
             "Unexpected archive inventory",
         )
         require(
             sum(item.file_size for item in archive.infolist()) <= MAX_BYTES,
             "Expanded archive exceeds size limit",
         )
-        payload = {name: archive.read(name) for name in names}
+        payload = {name: archive.read(archive_path(name) if name != "manifest.json" else name) for name in FILES}
     manifest = json.loads(payload["manifest.json"])
-    require(manifest["format"] == "openelis-amr-reference/v1", "Unknown format")
+    require(manifest["format"] == FORMAT, "Unknown format")
     require(
         re.fullmatch(r"[0-9a-f]{40}", manifest["source"]["commit"]),
         "Source commit is not pinned",
@@ -65,15 +66,16 @@ def validate(content):
         "Invalid package version",
     )
     require(
-        manifest["packageId"] == "amr-reference-" + manifest["packageVersion"],
+        manifest["packageId"] == "amr-reference",
         "Package identity mismatch",
     )
     require(
-        set(manifest["files"]) == FILES - {"manifest.json"},
+        set(manifest["files"]) == {archive_path(n) for n in FILES - {"manifest.json"}},
         "Manifest inventory mismatch",
     )
     tables = {}
-    for name, item in manifest["files"].items():
+    for name in FILES - {"manifest.json"}:
+        item = manifest["files"][archive_path(name)]
         data = payload[name]
         require(
             item["sha256"] == digest(data) and item["bytes"] == len(data),

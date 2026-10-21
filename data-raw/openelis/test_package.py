@@ -11,7 +11,7 @@ import sys
 import unittest
 import zipfile
 
-from build_package import package_files, validate_scope
+from build_package import archive_path, package_files, validate_scope
 from validate_package import validate
 
 
@@ -70,7 +70,7 @@ class ArtifactTest(unittest.TestCase):
     def setUpClass(cls):
         cls.content = Path(os.environ["AMR_REFERENCE_ARTIFACT"]).read_bytes()
         with zipfile.ZipFile(io.BytesIO(cls.content)) as archive:
-            cls.payload = {name: archive.read(name) for name in archive.namelist()}
+            cls.payload = {Path(name).name: archive.read(name) for name in archive.namelist()}
         cls.metadata = json.loads(cls.payload["manifest.json"])
         del cls.metadata["files"]
 
@@ -188,11 +188,11 @@ class ArtifactTest(unittest.TestCase):
             validate(content)
 
     def test_path_or_duplicate_entries_fail(self):
-        for extra in ("../outside", "organisms.csv"):
+        for extra in ("../outside", archive_path("organisms.csv")):
             output = io.BytesIO()
             with zipfile.ZipFile(output, "w") as archive:
                 for name, data in self.payload.items():
-                    archive.writestr(name, data)
+                    archive.writestr(archive_path(name) if name != "manifest.json" else name, data)
                 archive.writestr(extra, b"extra")
             with self.subTest(extra=extra), self.assertRaisesRegex(
                 ValueError, "inventory"
@@ -204,7 +204,7 @@ class ArtifactTest(unittest.TestCase):
         with zipfile.ZipFile(output, "w") as archive:
             for name, data in self.payload.items():
                 archive.writestr(
-                    name, data + b"\n" if name == "breakpoints.csv" else data
+                    archive_path(name) if name != "manifest.json" else name, data + b"\n" if name == "breakpoints.csv" else data
                 )
         with self.assertRaisesRegex(ValueError, "Checksum"):
             validate(output.getvalue())
