@@ -1,6 +1,7 @@
-# AMR 3.1.0.9004
+# AMR 3.1.0.9005
 
 ### Other
+* Added a standalone OpenELIS reference distribution builder with pinned EUCAST 2025/2026 MIC scope, source provenance, exclusion reports, interpretation comparison cases and an explicit release workflow
 * The manual index on the website was rewritten to improve findability, with sections ordered by task and a filter field
 
 # AMR 3.1.0

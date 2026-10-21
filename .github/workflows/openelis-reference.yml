@@ -1,0 +1,89 @@
+name: OpenELIS reference distribution
+
+on:
+  pull_request:
+    paths:
+      - 'data-raw/openelis/**'
+      - '.github/workflows/openelis-reference.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'data-raw/openelis/**'
+      - '.github/workflows/openelis-reference.yml'
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: 'Immutable distribution version, e.g. 2026.1'
+        required: true
+        default: '2026.1'
+      source_commit:
+        description: 'Full AMR source commit containing the pinned reference data'
+        required: true
+        default: '5fc152ae947240b03dd1085fb4ff1bc0df3137a1'
+      publish:
+        description: 'Publish a GitHub release after validation (main only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_VERSION: ${{ inputs.package_version || '2026.1' }}
+      SOURCE_COMMIT: ${{ inputs.source_commit || '5fc152ae947240b03dd1085fb4ff1bc0df3137a1' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch only the pinned data revision
+        shell: bash
+        run: |
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          if ! git cat-file -e "$SOURCE_COMMIT^{commit}" 2>/dev/null; then
+            git fetch --depth=1 origin "$SOURCE_COMMIT"
+          fi
+      - name: Build twice with pinned R and compare bytes
+        run: |
+          python3 data-raw/openelis/build_package.py --source-ref "$SOURCE_COMMIT" --package-version "$PACKAGE_VERSION" --runtime docker --output dist/first/amr-reference.zip
+          python3 data-raw/openelis/build_package.py --source-ref "$SOURCE_COMMIT" --package-version "$PACKAGE_VERSION" --runtime docker --output dist/second/amr-reference.zip
+          cmp dist/first/amr-reference.zip dist/second/amr-reference.zip
+          mkdir -p dist/release
+          cp dist/first/amr-reference.zip "dist/release/amr-reference-$PACKAGE_VERSION.zip"
+          cd dist/release
+          sha256sum "amr-reference-$PACKAGE_VERSION.zip" > "amr-reference-$PACKAGE_VERSION.zip.sha256"
+      - name: Check archive invariants and failure cases against the real data
+        env:
+          AMR_REFERENCE_ARTIFACT: dist/first/amr-reference.zip
+        run: python3 -m unittest discover -s data-raw/openelis -p 'test_*.py' -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openelis-reference
+          path: dist/release/*
+          if-no-files-found: error
+
+  publish:
+    timeout-minutes: 5
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PACKAGE_VERSION: ${{ inputs.package_version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openelis-reference
+          path: dist
+      - name: Create a new release; never replace a published version
+        run: |
+          gh release create "openelis-reference-$PACKAGE_VERSION" dist/* --target "$GITHUB_SHA" --title "OpenELIS AMR reference $PACKAGE_VERSION" --notes 'Scoped EUCAST 2025/2026 MIC reference distribution. See the pinned manifest, coverage.csv and data-raw/openelis/README.md. Requires the OpenELIS reference-package loader; editions load inactive.'
