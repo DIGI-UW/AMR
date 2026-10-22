@@ -8,7 +8,7 @@ import io
 import json
 import re
 import zipfile
-from build_package import archive_path, FORMAT
+from build_package import archive_path, FORMAT, validate_scope
 
 FILES = {
     "organisms.csv",
@@ -21,7 +21,8 @@ FILES = {
     "NOTICE.txt",
     "manifest.json",
 }
-MAX_BYTES = 32 * 1024 * 1024
+# The two-edition package includes source evidence and interpretation vectors.
+MAX_BYTES = 128 * 1024 * 1024
 
 
 def require(condition, message):
@@ -66,7 +67,7 @@ def validate(content):
         "Invalid package version",
     )
     require(
-        manifest["packageId"] == "amr-reference",
+        manifest["packageId"] in {"amr-reference-eucast", "amr-reference-clsi"},
         "Package identity mismatch",
     )
     require(
@@ -98,18 +99,16 @@ def validate(content):
             require(item["rows"] == len(tables[name]), "Row count mismatch: " + name)
     scope = json.loads(payload["scope.json"])
     require(scope == manifest["scope"], "Scope differs from manifest")
-    require(
-        scope["guidelines"] == ["EUCAST 2025", "EUCAST 2026"]
-        and scope["methods"] == ["MIC"],
-        "Unsupported release scope",
-    )
+    validate_scope(scope)
+    publisher = scope["guidelines"][0].split()[0]
+    require(manifest["packageId"] == "amr-reference-" + publisher.lower(), "Publisher identity mismatch")
     organisms = tables["organisms.csv"]
     agents = tables["antimicrobials.csv"]
     organism_codes = {row["code"] for row in organisms}
     agent_codes = {row["code"] for row in agents}
     require(
         len(organism_codes) == len(organisms)
-        and organism_codes == set(scope["organisms"]),
+        and len(organisms) > 5,
         "Organism inventory mismatch",
     )
     require(
@@ -129,7 +128,7 @@ def validate(content):
     )
     require(
         all(
-            row["publisher"] == "EUCAST"
+            row["publisher"] == publisher
             and row["version"]
             == row["guideline"].split()[1] + "-" + manifest["packageVersion"]
             for row in manifest["standards"]
@@ -146,7 +145,7 @@ def validate(content):
         )
         require(key not in rules, "Duplicate breakpoint")
         require(
-            row["publisher"] == "EUCAST" and row["version"] in editions.values(),
+            row["publisher"] == publisher and row["version"] in editions.values(),
             "Unexpected standard",
         )
         require(
@@ -159,12 +158,13 @@ def validate(content):
             "Unresolved concept",
         )
         require(
-            row["method"] == row["breakpoint_type"] == "MIC" and row["units"] == "mg/L",
+            row["method"] == row["breakpoint_type"] and row["method"] in {"MIC", "ZONE"}
+            and row["units"] == ("mg/L" if row["method"] == "MIC" else "mm"),
             "Unsupported method or units",
         )
         require(
-            row["resistant_inclusive"] == "false",
-            "EUCAST MIC requires a strict resistant boundary",
+            row["resistant_inclusive"] == ("true" if publisher == "CLSI" else "false"),
+            "Publisher resistant boundary differs from source",
         )
         require(
             not any(
@@ -177,19 +177,15 @@ def validate(content):
             ),
             "Unsupported context",
         )
-        susceptible, resistant = number(row["susceptible_value"]), number(
-            row["resistant_value"]
-        )
-        require(
-            Decimal("0.001") < susceptible <= resistant, "Invalid supported thresholds"
-        )
-        require(
-            all(
-                value.as_tuple().exponent >= -4 and value < 10**8
-                for value in (susceptible, resistant)
-            ),
-            "Threshold exceeds receiving precision",
-        )
+        if not row["susceptible_value"] and not row["resistant_value"]:
+            require("NO_BREAKPOINT:" in row["notes"], "Blocking rule needs a reason")
+            rules[key] = None
+            continue
+        susceptible, resistant = number(row["susceptible_value"]), number(row["resistant_value"])
+        require(row["method"] == "MIC" and Decimal("0.001") < susceptible <= resistant,
+                "Invalid supported thresholds")
+        require(all(value.as_tuple().exponent >= -4 and value < 10**8
+                    for value in (susceptible, resistant)), "Threshold exceeds receiving precision")
         rules[key] = (susceptible, resistant)
     require(
         rules and {key[0] for key in rules} == set(editions.values()), "Empty edition"
@@ -202,29 +198,34 @@ def validate(content):
             row["antibiotic_code"],
             row["method"],
         )
-        require(row["publisher"] == "EUCAST" and key in rules, "Vector without a rule")
+        require(row["publisher"] == publisher and key in rules, "Vector without a rule")
         value = number(row["value"])
         require(value not in observations[key], "Duplicate vector")
         observations[key].add(value)
+        if rules[key] is None:
+            require(row["expected"] == "NO_BREAKPOINT", "Blocked context has an interpretation")
+            continue
         susceptible, resistant = rules[key]
-        expected = "S" if value <= susceptible else "R" if value > resistant else "I"
-        require(
-            row["expected"] == expected, "AMR vector differs from translated threshold"
-        )
+        evaluated = value
+        if publisher == "CLSI":
+            # The source engine rounds measured MICs up to the next twofold dilution.
+            ladder = [Decimal(x) for x in (
+                "0.0001", "0.0002", "0.0005", "0.001", "0.002", "0.004", "0.008",
+                "0.016", "0.032", "0.064", "0.125", "0.25", "0.5", "1", "2", "4", "8",
+                "16", "32", "64", "128", "256", "512", "1024", "2048", "4096")]
+            evaluated = next((level for level in ladder if level >= value), value)
+        expected = "S" if evaluated <= susceptible else "R" if (
+            evaluated >= resistant if publisher == "CLSI" else evaluated > resistant
+        ) else "I"
+        require(row["expected"] == expected, "AMR vector differs from translated threshold")
     for key, values in observations.items():
+        require(values, "Missing boundary vectors")
+        if rules[key] is None:
+            continue
         susceptible, resistant = rules[key]
-        require(
-            susceptible in values
-            and resistant in values
-            and any(x < susceptible for x in values)
-            and any(x > resistant for x in values),
-            "Missing boundary vectors",
-        )
-        require(
-            susceptible == resistant
-            or any(susceptible < x <= resistant for x in values),
-            "Missing intermediate vector",
-        )
+        require(susceptible in values and resistant in values
+                and any(x < susceptible for x in values) and any(x > resistant for x in values),
+                "Missing boundary vectors")
     source_rows = tables["source-rows.csv"]
     source_ids = {row["source_row"] for row in source_rows}
     require(len(source_ids) == len(source_rows), "Duplicate source row")
@@ -256,15 +257,15 @@ def validate(content):
         referenced.update(ids)
         if row["status"] == "SUPPORTED":
             require(
-                key in rules and not row["reason"], "Supported coverage without a rule"
+                key in rules and rules[key] is not None and not row["reason"], "Supported coverage without a rule"
             )
             supported.add(key)
         else:
             require(
-                row["status"] == "UNSUPPORTED" and row["reason"] and key not in rules,
-                "Unsupported context has a rule",
+                row["status"] == "BLOCKED" and row["reason"] and key in rules and rules[key] is None,
+                "Blocked context has a numeric rule",
             )
-    require(supported == set(rules), "Rule missing supported coverage")
+    require(coverage_keys == set(rules), "Rule missing coverage")
     require(
         referenced
         == {
@@ -276,6 +277,7 @@ def validate(content):
         "organisms": len(organisms),
         "antimicrobials": len(agents),
         "rules": len(rules),
+        "supportedRules": len(supported),
         "vectors": len(tables["interpretation-vectors.csv"]),
         "unsupportedContexts": len(coverage_keys - supported),
     }

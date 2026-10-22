@@ -70,18 +70,12 @@ def git(*args):
 def validate_scope(scope):
     if set(scope) != {"guidelines", "organisms", "methods"}:
         raise ValueError("Scope requires guidelines, organisms and methods")
-    if scope["methods"] != ["MIC"]:
-        raise ValueError(
-            "Format v1 supports MIC; disk context must be supported before exporting zone rules"
-        )
-    if scope["guidelines"] != ["EUCAST 2025", "EUCAST 2026"]:
-        raise ValueError("This release requires exactly EUCAST 2025 and EUCAST 2026")
-    if not scope["organisms"] or any(
-        not re.fullmatch(r"[A-Z0-9_\[\]-]+", x) for x in scope["organisms"]
-    ):
-        raise ValueError("Provide explicit AMR organism codes")
-    if len(scope["organisms"]) != len(set(scope["organisms"])):
-        raise ValueError("Duplicate organism codes are not allowed")
+    if scope["methods"] != ["MIC", "ZONE"]:
+        raise ValueError("Scope must account for MIC and ZONE contexts")
+    if scope["guidelines"] not in (["EUCAST 2025", "EUCAST 2026"], ["CLSI 2025", "CLSI 2026"]):
+        raise ValueError("Build each publisher separately for exactly 2025 and 2026")
+    if scope["organisms"] != "human-breakpoint-taxa":
+        raise ValueError("Scope requires human-breakpoint-taxa")
 
 
 def build(args):
@@ -113,7 +107,7 @@ def build(args):
         output.mkdir()
         (work / "library").mkdir()
         (work / "organisms.txt").write_text(
-            "\n".join(sorted(set(scope["organisms"]))) + "\n"
+            scope["organisms"] + "\n"
         )
         (work / "guidelines.txt").write_text(
             "\n".join(sorted(set(scope["guidelines"]))) + "\n"
@@ -188,12 +182,13 @@ def build(args):
         (output / "scope.json").write_bytes(canonical_json(scope))
         (output / "NOTICE.txt").write_text(
             "Source: DIGI-UW/AMR, derived from AMR for R (GPL-2.0).\n"
-            "Clinical breakpoint source: EUCAST; retain its attribution and usage terms.\n"
+            "Clinical breakpoint source: " + scope["guidelines"][0].split()[0] + "; retain its attribution and usage terms.\n"
             "https://amr-for-r.org/reference/clinical_breakpoints.html\n"
             "https://www.eucast.org/clinical_breakpoints\n"
             "This is a scoped testing reference package, not the complete guideline or clinical approval.\n"
             "Only unconditional MIC S/I/R rules supported by the receiving contract are included.\n"
-            "No disk, site, route, UTI, SDD, capped MIC or expert-rule support is implied.\n"
+            "Unsupported disk, site, route, UTI, SDD and conditional contexts load as explicit No breakpoint rules.\n"
+            "CLSI-derived artifacts require restricted distribution; never publish them to a public gallery.\n"
             "Berends MS et al. (2022), Journal of Statistical Software 104(3), 1-31.\n"
             "https://doi.org/10.18637/jss.v104.i03\n"
             "Exact source: https://github.com/DIGI-UW/AMR/tree/" + commit + "\n"
@@ -207,7 +202,7 @@ def build(args):
                 "mode": args.runtime,
                 "image": R_IMAGE if args.runtime == "docker" else None,
             },
-            "packageId": "amr-reference",
+            "packageId": "amr-reference-" + scope["guidelines"][0].split()[0].lower(),
             "packageVersion": args.package_version,
             "source": {
                 "repository": "https://github.com/DIGI-UW/AMR",
@@ -231,7 +226,7 @@ def build(args):
             "scope": scope,
             "standards": [
                 {
-                    "publisher": "EUCAST",
+                    "publisher": x.split()[0],
                     "version": x.split()[1] + "-" + args.package_version,
                     "guideline": x,
                 }
@@ -241,7 +236,8 @@ def build(args):
         content = package_files(output, metadata)
         from validate_package import validate
 
-        validate(content)
+        counts = validate(content)
+        print(json.dumps({"bytes": len(content), **counts}, sort_keys=True), flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.output.exists() and args.output.read_bytes() != content:
         raise ValueError(

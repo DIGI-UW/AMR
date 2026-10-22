@@ -2,88 +2,95 @@ name: OpenELIS reference distribution
 
 on:
   pull_request:
-    paths:
-      - 'data-raw/openelis/**'
-      - '.github/workflows/openelis-reference.yml'
+    paths: ['data-raw/openelis/**', '.github/workflows/openelis-reference.yml']
   push:
     branches: [main]
-    paths:
-      - 'data-raw/openelis/**'
-      - '.github/workflows/openelis-reference.yml'
+    paths: ['data-raw/openelis/**', '.github/workflows/openelis-reference.yml']
   workflow_dispatch:
     inputs:
       package_version:
-        description: 'Immutable distribution version, e.g. 2026.1'
+        description: 'Immutable metadata version'
         required: true
         default: '2026.1'
       source_commit:
-        description: 'Full AMR source commit containing the pinned reference data'
+        description: 'Full pinned AMR data commit'
         required: true
         default: '5fc152ae947240b03dd1085fb4ff1bc0df3137a1'
       publish:
-        description: 'Publish a GitHub release after validation (main only)'
+        description: 'Publish verified packages to GHCR (main only)'
         type: boolean
         default: false
 
 permissions:
   contents: read
 
+env:
+  PACKAGE_VERSION: ${{ inputs.package_version || '2026.1' }}
+  SOURCE_COMMIT: ${{ inputs.source_commit || '5fc152ae947240b03dd1085fb4ff1bc0df3137a1' }}
+
 jobs:
   validate:
-    timeout-minutes: 15
+    timeout-minutes: 45
     runs-on: ubuntu-latest
-    env:
-      PACKAGE_VERSION: ${{ inputs.package_version || '2026.1' }}
-      SOURCE_COMMIT: ${{ inputs.source_commit || '5fc152ae947240b03dd1085fb4ff1bc0df3137a1' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        publisher: [eucast, clsi]
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Fetch only the pinned data revision
-        shell: bash
+      - name: Fetch pinned data
         run: |
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          if ! git cat-file -e "$SOURCE_COMMIT^{commit}" 2>/dev/null; then
-            git fetch --depth=1 origin "$SOURCE_COMMIT"
-          fi
-      - name: Build twice with pinned R and compare bytes
-        run: |
-          python3 data-raw/openelis/build_package.py --source-ref "$SOURCE_COMMIT" --package-version "$PACKAGE_VERSION" --runtime docker --output dist/first/amr-reference.zip
-          python3 data-raw/openelis/build_package.py --source-ref "$SOURCE_COMMIT" --package-version "$PACKAGE_VERSION" --runtime docker --output dist/second/amr-reference.zip
-          cmp dist/first/amr-reference.zip dist/second/amr-reference.zip
-          mkdir -p dist/release
-          cp dist/first/amr-reference.zip "dist/release/amr-reference-$PACKAGE_VERSION.zip"
-          cd dist/release
-          sha256sum "amr-reference-$PACKAGE_VERSION.zip" > "amr-reference-$PACKAGE_VERSION.zip.sha256"
-      - name: Check archive invariants and failure cases against the real data
+          git fetch --depth=1 origin "$SOURCE_COMMIT"
+      - name: Build twice and compare bytes
         env:
-          AMR_REFERENCE_ARTIFACT: dist/first/amr-reference.zip
+          PUBLISHER: ${{ matrix.publisher }}
+        run: |
+          scope=data-raw/openelis/scope.json
+          if [ "$PUBLISHER" = clsi ]; then scope=data-raw/openelis/scope-clsi.json; fi
+          for build in first second; do
+            python3 data-raw/openelis/build_package.py --scope "$scope" --source-ref "$SOURCE_COMMIT" --package-version "$PACKAGE_VERSION" --runtime docker --output "dist/$build/package.zip"
+          done
+          cmp dist/first/package.zip dist/second/package.zip
+      - name: Verify archive and failure cases against real data
+        env:
+          AMR_REFERENCE_ARTIFACT: dist/first/package.zip
         run: python3 -m unittest discover -s data-raw/openelis -p 'test_*.py' -v
-      - uses: actions/upload-artifact@v4
-        with:
-          name: openelis-reference
-          path: dist/release/*
-          if-no-files-found: error
+      # Do not upload CLSI-derived files as public-repository Actions artifacts.
 
   publish:
-    timeout-minutes: 5
     if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
     needs: validate
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        publisher: [eucast, clsi]
     env:
-      PACKAGE_VERSION: ${{ inputs.package_version }}
+      PUBLISHER: ${{ matrix.publisher }}
       GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          name: openelis-reference
-          path: dist
-      - name: Create a new release; never replace a published version
+          python-version: '3.12'
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
+        with:
+          version: '1.3.5'
+      - name: Rebuild verified source revision
         run: |
-          gh release create "openelis-reference-$PACKAGE_VERSION" dist/* --target "$GITHUB_SHA" --title "OpenELIS AMR reference $PACKAGE_VERSION" --notes 'Scoped EUCAST 2025/2026 MIC reference distribution. See the pinned manifest, coverage.csv and data-raw/openelis/README.md. Requires the OpenELIS reference-package loader; editions load inactive.'
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --depth=1 origin "$SOURCE_COMMIT"
+          scope=data-raw/openelis/scope.json
+          if [ "$PUBLISHER" = clsi ]; then scope=data-raw/openelis/scope-clsi.json; fi
+          python3 data-raw/openelis/build_package.py --scope "$scope" --source-ref "$SOURCE_COMMIT" --package-version "$PACKAGE_VERSION" --runtime docker --output dist/package.zip
+      - name: Publish immutable GHCR data artifact
+        run: |
+          printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          python3 data-raw/openelis/publish_package.py dist/package.zip --repository "ghcr.io/digi-uw/amr-reference-$PUBLISHER"

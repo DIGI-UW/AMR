@@ -1,178 +1,139 @@
-# OpenELIS AMR reference distribution
+# OpenELIS AMR configuration packages
 
-This directory builds a standalone, versioned configuration ZIP from a pinned
-commit of AMR for R. Deployments select the release and checksum. The deployment installs its CSV domain files into the existing configuration
-folder; OpenELIS loads those files through its normal configuration handlers; it does not need R, this
-repository, a submodule, or a copy of the reference data in its application image.
+This exporter turns pinned AMR-for-R reference data into independently released
+configuration files. GHCR stores the package. A deployment pins its digest and
+places the files in OpenELIS's existing configuration folder. OpenELIS uses its
+normal catalog handlers; it needs neither R nor a package archive importer.
 
-## First release scope
+## Scope and interpretation
 
-The baseline explicitly selects **EUCAST 2025 and EUCAST 2026**. It never chooses
-a guideline by the current date or an unqualified “latest” setting. CLSI,
-veterinary standards, ECOFFs and expert rules are outside this distribution.
+The scope is **human EUCAST 2025/2026 and CLSI 2025/2026**, built separately.
+There is no rolling latest-year selection. Veterinary standards, epidemiological
+cutoffs and expert rules are outside this release.
 
-The five organism concepts in `scope.json` are _Escherichia coli_, _Klebsiella
-pneumoniae_, _Pseudomonas aeruginosa_, _Staphylococcus aureus_ and _Streptococcus
-pneumoniae_. Antimicrobial concepts are included for all their candidate contexts,
-including contexts whose breakpoints cannot be translated. This is a first
-bounded baseline, not the full organism catalogue or complete EUCAST tables.
+`human-breakpoint-taxa` includes every organism target in the selected source
+editions, plus accepted species of common human prevalence beneath those targets that
+have WHONET mappings in the source.
+Taxonomic ancestry and group membership come from the same pinned AMR revision.
+All antimicrobial concepts referenced by candidate contexts are included, even
+when a particular context cannot produce an interpretation. WHONET mappings use
+unambiguous exact source mappings; missing mappings are left blank.
 
-Only unconditional numeric MIC S/I/R rules are emitted. The exporter resolves
-exact organisms, their taxonomic ancestors, AMR groups and broad taxa using the
-pinned source, then compares each proposed rule with AMR's own `as.sir()` output.
-The following contexts are excluded and reported instead of approximated:
+Each organism/agent/method/edition context receives an exact organism rule.
+Supported MIC rules retain the original thresholds. EUCAST uses a strict
+resistant boundary; CLSI uses an inclusive boundary and rounds the measured MIC
+up to the conventional dilution ladder for interpretation. The measured value
+itself is preserved by OpenELIS. Proposed numeric results are checked against
+AMR's actual `as.sir()` using its normal source data and matching logic.
 
-- Disk diffusion, which requires disk-content context.
-- Site, administration-route or urinary-tract conditions.
-- Susceptible-dose-dependent categories, missing/blocking thresholds, no
-  susceptible category, ambiguous equally ranked rules and conditional notes.
-- Any rule whose translated interpretation disagrees with AMR.
+The exporter writes explicit empty rules for unsupported contexts. These return
+**No breakpoint** and prevent a broad numeric fallback. Coverage records explain:
 
-A contextual candidate excludes its whole organism/antimicrobial/method context;
-the exporter does not select a convenient numeric fallback. Notes are treated
-conservatively: every nonempty note requires review before support can expand.
-At the initial source pin there are **68 rules across the two editions**, for
-four of the five organisms. _P. aeruginosa_ is a concept only; all its candidate
-breakpoints are excluded. `coverage.csv` is the authoritative supported-context
-list. This release alone is not a complete PNG testing catalogue.
+- Disk diffusion, until the receiving workflow can enforce disk content.
+- Site, route, urinary-tract conditions and conditional notes.
+- Susceptible-dose-dependent, incomplete and no-susceptible-category rules.
+- Ambiguous equally ranked source rules or disagreement with source interpretation.
 
-EUCAST MIC boundaries are preserved exactly: S at or below `susceptible_value`,
-R strictly above `resistant_value`, otherwise I. Thresholds are never moved to
-the next dilution. Capped observations such as `<=0.5` require separate consumer
-support and are not covered by the comparison cases.
+Nonempty notes are treated conservatively. Unsupported cases are accounted for,
+not converted to convenient clinical thresholds. `coverage.csv` is the exact
+supported/blocked inventory. This is a testing reference package, not approval
+of every PNG clinical workflow. Capped observations and expert-rule logic require
+separate receiving support.
 
 ## Build and validate
 
-Prerequisites: Git, Python **3.12+**, and Docker with the selected context running.
-The official path uses a digest-pinned R 4.5.1 image. Docker may pull that image
-on first use; both source installation and export containers run without a
-network. No third-party Python or R build packages are required.
-
-From this repository root:
+Use Git, Python 3.12+ and Docker. The builder installs the exact source revision
+in an isolated library using a digest-pinned R image, without container network
+access or third-party R/Python dependencies.
 
 ```sh
 python3 data-raw/openelis/build_package.py \
   --source-ref 5fc152ae947240b03dd1085fb4ff1bc0df3137a1 \
-  --package-version 2026.1 \
-  --runtime docker \
-  --output dist/amr-reference-2026.1.zip
+  --package-version 2026.1 --runtime docker \
+  --output dist/amr-reference-eucast-2026.1.zip
 
-AMR_REFERENCE_ARTIFACT=dist/amr-reference-2026.1.zip \
+# Build CLSI separately; keep its output restricted.
+python3 data-raw/openelis/build_package.py \
+  --scope data-raw/openelis/scope-clsi.json \
+  --source-ref 5fc152ae947240b03dd1085fb4ff1bc0df3137a1 \
+  --package-version 2026.1 --runtime docker \
+  --output dist/amr-reference-clsi-2026.1.zip
+
+AMR_REFERENCE_ARTIFACT=dist/amr-reference-eucast-2026.1.zip \
   python3 -m unittest discover -s data-raw/openelis -p 'test_*.py' -v
-
-python3 data-raw/openelis/validate_package.py dist/amr-reference-2026.1.zip
 ```
 
-The source commit must exist locally and must be its full 40-character ID.
-Moving refs such as `main` are rejected. Source installation uses an isolated
-library, so an already installed AMR package cannot substitute different data.
-`--runtime local` is a development convenience for machines with R and Rscript;
-release builds use the fixed Docker runtime.
+Run the artifact tests for each publisher. Source refs must be full commit IDs.
+`--runtime local` is a development convenience; release builds use pinned Docker.
+Build to two different paths and compare bytes. Stable ordering, fixed ZIP times
+and permissions, canonical JSON and no build timestamp make output reproducible.
+A changed dataset, scope or exporter requires a new package version. Never replace
+an existing release. New edition identities preserve earlier result references.
 
-Reproducibility includes file order, UTF-8 CSVs, canonical manifest JSON, fixed ZIP
-permissions/timestamps and no build timestamp. Build into two different output
-directories and compare the ZIP bytes. Rebuilding an existing path is allowed
-only if its content is identical. Changed data, scope or exporter behaviour
-requires a new distribution version. Historical releases remain available.
+## Package layout
 
-## Archive contract: `openelis-configuration/v1`
-
-This is the generic metadata distribution layout, not an application ZIP import
-API. `manifest.json` is at the root. The three operational CSVs are under:
+The generic envelope is `openelis-configuration/v1`. `manifest.json` records
+package identity/version, source commit, dataset and exporter checksums, scope,
+editions and each file's SHA-256, size and CSV row count. Package IDs are
+`amr-reference-eucast` and `amr-reference-clsi`.
 
 ```text
+manifest.json
 configuration/backend/microbiology-organisms/organisms.csv
 configuration/backend/microbiology-antimicrobials/antimicrobials.csv
 configuration/backend/microbiology-breakpoints/breakpoints.csv
+evidence/scope.json
+evidence/coverage.csv
+evidence/source-rows.csv
+evidence/interpretation-vectors.csv
+evidence/NOTICE.txt
 ```
 
-All other payloads below are under `evidence/`. The manifest's `files` inventory
-uses full archive-relative paths, with SHA-256 and byte length for every payload.
-Its stable `packageId` is `amr-reference`; `packageVersion` identifies the release.
-A generic deployment installer only needs this envelope and configuration paths.
-AMR-specific scope, coverage and source interpretation checks remain in this
-exporter's validator and the receiving application's compatibility tests.
-No executable code is installed.
+Concept identity is `source=AMR` plus the source code. Display names and WHONET
+codes are matching aids. Group rules expand into exact organism rules; this
+package does not introduce a shared group fallback in OpenELIS.
 
-| File                         | Purpose                                                                                                                                                                                   |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `manifest.json`              | Format/package version, source commit and R-package version, source dataset hashes, exporter hashes, scope, edition identities and every payload's byte length, SHA-256 and CSV row count |
-| `scope.json`                 | Explicit organism IDs, method and both guideline years                                                                                                                                    |
-| `organisms.csv`              | `source,code,displayName,whonetCode,gramStain`                                                                                                                                            |
-| `antimicrobials.csv`         | `source,code,displayName,whonetCode,antibioticClass`                                                                                                                                      |
-| `breakpoints.csv`            | Exact organism/antimicrobial MIC rules with source IDs and strictness; see below                                                                                                          |
-| `interpretation-vectors.csv` | Numeric boundary and off-dilution observations, with expected S/I/R generated by the pinned AMR interpreter                                                                               |
-| `coverage.csv`               | Every candidate context for each selected organism: SUPPORTED or UNSUPPORTED, reason and contributing source row numbers                                                                  |
-| `source-rows.csv`            | Every human breakpoint row in the two selected editions, linked to coverage or explicitly outside organism scope                                                                          |
-| `NOTICE.txt`                 | Source and publisher attribution, source link, citation and the pinned source's full licence text                                                                                         |
+Coverage records each context as SUPPORTED or BLOCKED with its source row IDs.
+The source ledger accounts for all human rows in the selected editions. Numeric
+comparison cases come from the source interpreter; blocked cases assert the
+receiving application's No breakpoint behavior. Evidence stays outside the
+runtime configuration scan. No executable code is installed.
 
-Breakpoint columns are:
+Each edition version includes the package version, such as `2026-2026.1`.
+The receiving application rejects changes to an existing managed edition. Changes
+to unrelated release evidence do not change that edition's content identity.
 
-```text
-publisher,version,organism_or_group,antibiotic_whonet_code,method,specimen_type_id,
-breakpoint_type,susceptible_value,intermediate_lower_value,intermediate_upper_value,
-resistant_value,units,resistant_inclusive,organism_source,organism_code,
-antibiotic_source,antibiotic_code,notes
+## GHCR publication and deployment pins
+
+The workflow builds each publisher twice and tests the results. It does not
+upload CLSI files as public repository Actions artifacts. After merge, manually
+run it on main with `publish` enabled, an explicit source commit and version.
+It publishes OCI data artifacts with one `application/zip` layer using ORAS.
+The publisher rejects an existing version tag and checks private visibility
+before and after CLSI publication. A new GHCR package defaults to private.
+Never change the CLSI package to public visibility.
+
+For an authorized local release, authenticate `gh` and `oras` to GHCR, then run:
+
+```sh
+python3 data-raw/openelis/publish_package.py \
+  dist/amr-reference-eucast-2026.1.zip \
+  --repository ghcr.io/digi-uw/amr-reference-eucast
 ```
 
-`source=AMR` plus `code` is the stable concept identity. WHONET codes and display
-names are matching aids, not replacement IDs. The organism WHONET code is populated
-only when the pinned source gives one unambiguous exact-name mapping. Group
-rules are resolved into the selected exact organism; this package does not
-introduce a shared group membership or broad fallback rule in OpenELIS.
+The command prints a JSON deployment pin with `id`, `version`, the immutable
+`oci://ghcr.io/...@sha256:<manifest digest>` URL and the ZIP `sha256`. Commit that
+actual pin in the distribution, never a placeholder or moving tag. Credentials
+for private package reads belong in deployment secrets, never in the pin.
 
-Each edition has a package-specific version, e.g. `2026-2026.1`, so a corrected
-release can coexist with historical results. Reusing that edition identity for changed configuration content must be rejected
-by the consumer. Changing unrelated archive evidence does not change an edition.
+The PNG initializer verifies the manifest digest, layer digest, ZIP checksum and
+file inventory, caches the archive, then installs ordinary configuration files.
+It preserves local files and historical versions and reuses verified cache files
+offline. The existing OpenELIS configuration loader imports concepts before
+breakpoints and preserves referenced IDs and local customizations.
 
-## Publish and pin
-
-The `OpenELIS reference distribution` workflow builds twice, compares the bytes,
-runs contract/failure tests and retains candidate ZIP/checksum files on PRs.
-It does not publish automatically. After merge, run the workflow on **main**
-with an explicit source commit and distribution version, and enable `publish`.
-It creates a release tagged `openelis-reference-<version>` with:
-
-```text
-amr-reference-<version>.zip
-amr-reference-<version>.zip.sha256
-```
-
-An existing release cannot be overwritten by this workflow. The release tag
-identifies the exporter revision; `manifest.source.commit` identifies the AMR
-data revision. Pin the release URL **and the reviewed ZIP SHA-256** in the
-deployment's configuration. Do not fetch from a `latest` URL at application boot.
-Generated archives are release assets, not checked-in data or Liquibase seeds.
-
-## Consumer requirements and deployment handoff
-
-The receiving OpenELIS change adds the missing organism, antimicrobial and
-breakpoint CSV domains to its existing catalog framework. It does not add an
-archive parser or a second import pipeline. Verify the receiving application
-supports source identity matching and strict resistant boundaries before pinning
-this dataset.
-
-1. Pin the release HTTPS URL, reviewed SHA-256, `id: amr-reference` and version
-   in deployment configuration. The generic PNG initializer accepts any metadata
-   publisher using `openelis-configuration/v1`; it has no AMR URL or filename
-   assumptions.
-2. On normal startup, the initializer verifies and caches the archive, checks its
-   inventory, and installs the operational files into the existing configuration
-   tree. It prefixes filenames with package identity and version to preserve site
-   files and earlier editions. Evidence stays in the cache, outside scanned
-   domains. No manual CSV upload is needed.
-3. Existing OE2 startup/reload loads concepts before breakpoints. Import Catalog
-   also exposes preview and apply with ordinary row summaries. A failed
-   breakpoint file rolls back; earlier successful concept files can remain.
-   New editions remain inactive. Observe import results, not just HTTP health.
-4. Receiving-application compatibility tests load these same CSVs and compare
-   every source-generated observation with the Java interpreter. Evidence files
-   are test inputs, not runtime startup requirements.
-5. Review coverage and explicitly activate an edition through administration.
-   Missing exact supported rules must not acquire an inferred broad fallback.
-
-Reloads preserve source identities, local edits, activation and historical IDs.
-New revisions use new edition identities and load inactive. The deployment owns
-metadata selection independently of application upgrades. No operational
-concepts are seeded through Liquibase, stored in OE2 source, or supplied through
-an R runtime in the laboratory application.
+Before deployment, run the receiving Java compatibility test against each real
+artifact, verify fresh loading and reload/upgrade, and inspect import reports.
+New editions load inactive; activation is an explicit laboratory administration
+step. HTTP health alone is not evidence that configuration loaded successfully.
+No concept data belongs in Liquibase or the OpenELIS application image.

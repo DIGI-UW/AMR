@@ -1,11 +1,5 @@
 {
   "guidelines": ["EUCAST 2025", "EUCAST 2026"],
-  "organisms": [
-    "B_ESCHR_COLI",
-    "B_KLBSL_PNMN",
-    "B_PSDMN_AERG",
-    "B_STPHY_AURS",
-    "B_STRPT_PNMN"
-  ],
-  "methods": ["MIC"]
+  "organisms": "human-breakpoint-taxa",
+  "methods": ["MIC", "ZONE"]
 }

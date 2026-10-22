@@ -1,0 +1,5 @@
+{
+  "guidelines": ["CLSI 2025", "CLSI 2026"],
+  "organisms": "human-breakpoint-taxa",
+  "methods": ["MIC", "ZONE"]
+}
