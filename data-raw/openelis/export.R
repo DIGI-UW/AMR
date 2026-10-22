@@ -148,11 +148,25 @@ for (guideline in guidelines) {
   selected <- which(checks$publisher == publisher & checks$version == edition & checks$expected == "PENDING")
   if (!length(selected)) next
   values <- checks$value[selected]
-  expected <- as.character(suppressMessages(suppressWarnings(as.sir(
-    as.mic(values), mo = checks$organism_code[selected], ab = checks$antibiotic_code[selected],
-    guideline = guideline, uti = FALSE, include_screening = FALSE, include_PKPD = FALSE,
-    add_intrinsic_resistance = FALSE, info = FALSE
-  ))))
+  # The public interpreter appends every observation to its session history.
+  # Bounded batches avoid repeatedly copying the entire edition's history.
+  expected <- character(length(selected))
+  for (batch in split(seq_along(selected), ceiling(seq_along(selected) / 1000L))) {
+    invisible(sir_interpretation_history(clean = TRUE))
+    indices <- selected[batch]
+    expected[batch] <- as.character(suppressMessages(suppressWarnings(as.sir(
+      as.mic(checks$value[indices]),
+      mo = checks$organism_code[indices],
+      ab = checks$antibiotic_code[indices],
+      guideline = guideline,
+      uti = FALSE,
+      include_screening = FALSE,
+      include_PKPD = FALSE,
+      add_intrinsic_resistance = FALSE,
+      info = FALSE
+    ))))
+  }
+  invisible(sir_interpretation_history(clean = TRUE))
   matched <- match(check_keys[selected], rule_keys)
   evaluated <- values
   if (publisher == "CLSI") {
