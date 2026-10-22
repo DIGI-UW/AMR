@@ -19,8 +19,8 @@ class PublicationTest(unittest.TestCase):
                 "packageId": "amr-reference-clsi", "packageVersion": "2026.1"}))
         self.destination = "ghcr.io/digi-uw/amr-reference-clsi"
 
-    def test_clsi_cannot_be_uploaded_to_a_public_or_internal_package(self):
-        for visibility in ("public", "internal"):
+    def test_clsi_requires_an_existing_verified_private_package(self):
+        for visibility in (None, "public", "internal"):
             with patch.object(publication, "validate"), patch.object(publication, "package_visibility", return_value=visibility), patch.object(publication.subprocess, "run") as run:
                 with self.assertRaisesRegex(ValueError, "private GHCR"):
                     publication.publish(self.artifact, self.destination)

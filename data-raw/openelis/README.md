@@ -110,8 +110,18 @@ upload CLSI files as public repository Actions artifacts. After merge, manually
 run it on main with `publish` enabled, an explicit source commit and version.
 It publishes OCI data artifacts with one `application/zip` layer using ORAS.
 The publisher rejects an existing version tag and checks private visibility
-before and after CLSI publication. A new GHCR package defaults to private.
-Never change the CLSI package to public visibility.
+before and after CLSI publication. CLSI requires an existing package whose
+visibility is verified as private; source-repository inheritance can otherwise
+create an internal package. For the first release, create an empty placeholder
+with no restricted content, set its visibility to private in GitHub's package
+settings, then run the publisher. Never change CLSI to public or internal visibility.
+
+```sh
+oras push --artifact-type application/vnd.openelis.registry-bootstrap.v1 \
+  ghcr.io/digi-uw/amr-reference-clsi:registry-bootstrap
+```
+
+The placeholder contains no reference data and is not a deployment release.
 
 For an authorized local release, authenticate `gh` and `oras` to GHCR, then run:
 

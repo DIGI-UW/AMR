@@ -14,7 +14,7 @@ def package_visibility(name):
                             text=True, capture_output=True)
     if result.returncode:
         if "HTTP 404" in result.stderr:
-            return None  # GHCR creates new packages private.
+            return None  # An absent package has no verified visibility.
         raise RuntimeError("Cannot verify GHCR package visibility: " + result.stderr)
     return json.loads(result.stdout)["visibility"]
 
@@ -28,7 +28,7 @@ def publish(artifact, repository):
     if repository != "ghcr.io/digi-uw/" + identity:
         raise ValueError("Registry destination differs from publisher identity")
     visibility = package_visibility(identity)
-    if identity.endswith("clsi") and visibility not in (None, "private"):
+    if identity.endswith("clsi") and visibility != "private":
         raise ValueError("CLSI publication requires a private GHCR package")
     reference = repository + ":" + version
     existing = subprocess.run(["oras", "resolve", reference], text=True, capture_output=True)
