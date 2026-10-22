@@ -11,7 +11,7 @@ on:
       package_version:
         description: 'Immutable metadata version'
         required: true
-        default: '2026.1'
+        default: '2026.2'
       source_commit:
         description: 'Full pinned AMR data commit'
         required: true
@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 env:
-  PACKAGE_VERSION: ${{ inputs.package_version || '2026.1' }}
+  PACKAGE_VERSION: ${{ inputs.package_version || '2026.2' }}
   SOURCE_COMMIT: ${{ inputs.source_commit || '5fc152ae947240b03dd1085fb4ff1bc0df3137a1' }}
 
 jobs:
@@ -59,7 +59,6 @@ jobs:
         env:
           AMR_REFERENCE_ARTIFACT: dist/first/package.zip
         run: python3 -m unittest discover -s data-raw/openelis -p 'test_*.py' -v
-      # Do not upload CLSI-derived files as public-repository Actions artifacts.
 
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'

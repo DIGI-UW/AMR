@@ -52,7 +52,7 @@ python3 data-raw/openelis/build_package.py \
   --package-version 2026.1 --runtime docker \
   --output dist/amr-reference-eucast-2026.1.zip
 
-# Build CLSI separately; keep its output restricted.
+# Build CLSI separately with its own immutable deployment pin.
 python3 data-raw/openelis/build_package.py \
   --scope data-raw/openelis/scope-clsi.json \
   --source-ref 5fc152ae947240b03dd1085fb4ff1bc0df3137a1 \
@@ -105,23 +105,24 @@ to unrelated release evidence do not change that edition's content identity.
 
 ## GHCR publication and deployment pins
 
-The workflow builds each publisher twice and tests the results. It does not
-upload CLSI files as public repository Actions artifacts. After merge, manually
-run it on main with `publish` enabled, an explicit source commit and version.
-It publishes OCI data artifacts with one `application/zip` layer using ORAS.
-The publisher rejects an existing version tag and checks private visibility
-before and after CLSI publication. CLSI requires an existing package whose
-visibility is verified as private; source-repository inheritance can otherwise
-create an internal package. For the first release, create an empty placeholder
-with no restricted content, set its visibility to private in GitHub's package
-settings, then run the publisher. Never change CLSI to public or internal visibility.
+The workflow builds each publisher twice and tests the results. After merge,
+manually run it on main with `publish` enabled, an explicit source commit and a
+new version. It publishes OCI data artifacts with one `application/zip` layer
+using ORAS. Existing version tags are immutable.
 
-```sh
-oras push --artifact-type application/vnd.openelis.registry-bootstrap.v1 \
-  ghcr.io/digi-uw/amr-reference-clsi:registry-bootstrap
-```
+Both packages must be **public** in GHCR, independently of their source
+repository visibility. The publisher checks this before and after uploading.
+For first publication, create an empty registry bootstrap artifact, set the
+package to public in GitHub's package settings, then publish the release.
+An internal package still requires credentials and is unsuitable for these pins.
 
-The placeholder contains no reference data and is not a deployment release.
+[AMR's dataset documentation](https://amr-for-r.org/reference/clinical_breakpoints.html)
+describes public distribution of both datasets and their source attribution.
+This package distributes those scoped data, not the publishers' complete
+standards documents. Preserve the included attribution and clinical limitations.
+The private-only CLSI sentence in the original 2026.1 NOTICE was an erroneous
+exporter restriction; it is superseded by this policy. The published release
+bytes and checksums remain unchanged.
 
 For an authorized local release, authenticate `gh` and `oras` to GHCR, then run:
 
@@ -133,8 +134,10 @@ python3 data-raw/openelis/publish_package.py \
 
 The command prints a JSON deployment pin with `id`, `version`, the immutable
 `oci://ghcr.io/...@sha256:<manifest digest>` URL and the ZIP `sha256`. Commit that
-actual pin in the distribution, never a placeholder or moving tag. Credentials
-for private package reads belong in deployment secrets, never in the pin.
+actual pin in the distribution, never a placeholder or moving tag. Verify the
+normal distribution initializer using a new empty cache and no registry
+credentials before accepting a release; an authenticated publisher pull is not
+evidence of anonymous deployment access.
 
 The PNG initializer verifies the manifest digest, layer digest, ZIP checksum and
 file inventory, caches the archive, then installs ordinary configuration files.

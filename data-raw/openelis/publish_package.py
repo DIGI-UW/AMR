@@ -28,8 +28,8 @@ def publish(artifact, repository):
     if repository != "ghcr.io/digi-uw/" + identity:
         raise ValueError("Registry destination differs from publisher identity")
     visibility = package_visibility(identity)
-    if identity.endswith("clsi") and visibility != "private":
-        raise ValueError("CLSI publication requires a private GHCR package")
+    if visibility != "public":
+        raise ValueError("Publication requires an existing public GHCR package")
     reference = repository + ":" + version
     existing = subprocess.run(["oras", "resolve", reference], text=True, capture_output=True)
     if existing.returncode == 0:
@@ -49,8 +49,8 @@ def publish(artifact, repository):
         reference, artifact.name + ":application/zip",
     ], cwd=artifact.resolve().parent, text=True)
     descriptor = json.loads(result)
-    if identity.endswith("clsi") and package_visibility(identity) != "private":
-        raise RuntimeError("CLSI package visibility verification failed after upload")
+    if package_visibility(identity) != "public":
+        raise RuntimeError("Public package visibility verification failed after upload")
     pin = {"id": identity, "version": version,
            "url": "oci://" + repository + "@" + descriptor["digest"],
            "sha256": hashlib.sha256(content).hexdigest()}

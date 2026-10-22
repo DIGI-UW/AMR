@@ -188,7 +188,7 @@ def build(args):
             "This is a scoped testing reference package, not the complete guideline or clinical approval.\n"
             "Only unconditional MIC S/I/R rules supported by the receiving contract are included.\n"
             "Unsupported disk, site, route, UTI, SDD and conditional contexts load as explicit No breakpoint rules.\n"
-            "CLSI-derived artifacts require restricted distribution; never publish them to a public gallery.\n"
+            "The AMR package documents public distribution of its EUCAST and CLSI breakpoint datasets.\n"
             "Berends MS et al. (2022), Journal of Statistical Software 104(3), 1-31.\n"
             "https://doi.org/10.18637/jss.v104.i03\n"
             "Exact source: https://github.com/DIGI-UW/AMR/tree/" + commit + "\n"
