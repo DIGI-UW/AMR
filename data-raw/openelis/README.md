@@ -30,7 +30,8 @@ The exporter writes explicit empty rules for unsupported contexts. These return
 **No breakpoint** and prevent a broad numeric fallback. Coverage records explain:
 
 - Disk diffusion, until the receiving workflow can enforce disk content.
-- Site, route, urinary-tract conditions and conditional notes.
+- Site, route, urinary-tract conditions and conditional notes, except the exact
+  `Non-meningitis` MIC context described below.
 - Susceptible-dose-dependent, incomplete and no-susceptible-category rules.
 - Ambiguous equally ranked source rules or disagreement with source interpretation.
 
@@ -39,6 +40,17 @@ not converted to convenient clinical thresholds. `coverage.csv` is the exact
 supported/blocked inventory. This is a testing reference package, not approval
 of every PNG clinical workflow. Capped observations and expert-rule logic require
 separate receiving support.
+
+## Explicit clinical indication
+
+The CSV `clinical_context` column is blank for unconditional or blocked rules.
+`NON_MENINGITIS` supplies an additional exact source context only when the
+best-ranked source rows explicitly say `Non-meningitis`. Notes, urinary-tract
+conditions, incomplete thresholds, disk methods, and ambiguous rules remain
+blocked. The same source-interpreter verification applies to these numeric rules.
+The receiving workflow must explicitly record that indication on the run; it must
+not infer it from a blood specimen or use these rows when context is unspecified.
+Existing package versions are immutable; this support requires a new release.
 
 ## Build and validate
 

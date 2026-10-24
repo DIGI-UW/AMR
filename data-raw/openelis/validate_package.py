@@ -142,6 +142,7 @@ def validate(content):
             row["organism_code"],
             row["antibiotic_code"],
             row["method"],
+            row.get("clinical_context", ""),
         )
         require(key not in rules, "Duplicate breakpoint")
         require(
@@ -162,6 +163,7 @@ def validate(content):
             and row["units"] == ("mg/L" if row["method"] == "MIC" else "mm"),
             "Unsupported method or units",
         )
+        require(row.get("clinical_context", "") in {"", "NON_MENINGITIS"}, "Unsupported clinical indication")
         require(
             row["resistant_inclusive"] == ("true" if publisher == "CLSI" else "false"),
             "Publisher resistant boundary differs from source",
@@ -197,6 +199,7 @@ def validate(content):
             row["organism_code"],
             row["antibiotic_code"],
             row["method"],
+            row.get("clinical_context", ""),
         )
         require(row["publisher"] == publisher and key in rules, "Vector without a rule")
         value = number(row["value"])
@@ -244,6 +247,7 @@ def validate(content):
             row["organism_code"],
             row["antibiotic_code"],
             row["method"],
+            row.get("clinical_context", ""),
         )
         require(key not in coverage_keys, "Duplicate coverage context")
         coverage_keys.add(key)

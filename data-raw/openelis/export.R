@@ -46,10 +46,10 @@ vectors <- list()
 coverage <- list()
 used_source_rows <- integer()
 used_agents <- character()
-add_coverage <- function(code, guideline, agent, method, status, reason, ids) {
+add_coverage <- function(code, guideline, agent, method, status, reason, ids, context) {
   coverage[[length(coverage) + 1L]] <<- data.frame(
     organism_code = code, guideline = guideline, antibiotic_code = agent,
-    method = method, status = status, reason = reason,
+    method = method, clinical_context = context, status = status, reason = reason,
     source_rows = paste(sort(ids), collapse = ";"), stringsAsFactors = FALSE
   )
 }
@@ -75,11 +75,17 @@ for (code in organism_codes) {
       used_agents <- union(used_agents, agent)
       for (method in sort(unique(current$method[as.character(current$ab) == agent]))) {
         candidates <- current[as.character(current$ab) == agent & current$method == method, , drop = FALSE]
+        ranked <- candidates[candidates$rank_index == min(candidates$rank_index), , drop = FALSE]
+        for (context in c("", "NON_MENINGITIS")) {
+        best <- ranked
+        if (context == "NON_MENINGITIS") {
+          best <- best[!is.na(best$site) & best$site == "Non-meningitis", , drop = FALSE]
+          if (!nrow(best)) next
+        }
         reason <- ""
-        best <- candidates[candidates$rank_index == min(candidates$rank_index), , drop = FALSE]
         signatures <- unique(best[c("breakpoint_S", "breakpoint_R", "is_SDD", "note", "site", "uti", "disk_dose")])
         if (nrow(signatures) != 1L) reason <- "ambiguous_same_rank_rules"
-        if (any(best$uti %in% TRUE | !empty(best$site))) reason <- "site_route_or_uti_context_not_supported"
+        if (any(best$uti %in% TRUE | (!empty(best$site) & context == ""))) reason <- "site_route_or_uti_context_not_supported"
         if (any(best$is_SDD %in% TRUE)) reason <- "sdd_not_supported"
         if (any(is.na(best$breakpoint_S) | is.na(best$breakpoint_R))) reason <- "no_or_incomplete_breakpoint"
         if (any(!empty(best$note))) reason <- "conditional_note_requires_review"
@@ -106,7 +112,7 @@ for (code in organism_codes) {
         }
         edition <- paste(sub("^[A-Z]+ ", "", guideline), version, sep = "-")
         rows[[length(rows) + 1L]] <- data.frame(
-          publisher = publisher, version = edition,
+          publisher = publisher, version = edition, clinical_context = context,
           organism_or_group = organism$fullname, antibiotic_whonet_code = agent,
           method = if (mic_method) "MIC" else "ZONE", specimen_type_id = "",
           breakpoint_type = if (mic_method) "MIC" else "ZONE",
@@ -122,12 +128,13 @@ for (code in organism_codes) {
           stringsAsFactors = FALSE
         )
         vectors[[length(vectors) + 1L]] <- data.frame(
-          publisher = publisher, version = edition, organism_code = code,
+          publisher = publisher, version = edition, clinical_context = context, organism_code = code,
           antibiotic_code = agent, method = if (mic_method) "MIC" else "ZONE", value = points,
           expected = if (reason == "") "PENDING" else "NO_BREAKPOINT", stringsAsFactors = FALSE
         )
         add_coverage(code, guideline, agent, if (mic_method) "MIC" else "ZONE",
-          if (reason == "") "SUPPORTED" else "BLOCKED", reason, candidates$source_row)
+          if (reason == "") "SUPPORTED" else "BLOCKED", reason, candidates$source_row, context)
+        }
       }
     }
   }
@@ -136,7 +143,7 @@ if (!length(rows)) stop("Scope produces no supported breakpoints")
 rules <- do.call(rbind, rows)
 checks <- do.call(rbind, vectors)
 coverage <- do.call(rbind, coverage)
-context_key <- function(x) paste(x$publisher, x$version, x$organism_code, x$antibiotic_code, x$method, sep = "|")
+context_key <- function(x) paste(x$publisher, x$version, x$organism_code, x$antibiotic_code, x$method, x$clinical_context, sep = "|")
 rule_keys <- context_key(rules)
 check_keys <- context_key(checks)
 # Batch the real source interpreter by edition, retaining its CLSI rounding and

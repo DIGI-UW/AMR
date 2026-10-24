@@ -108,6 +108,21 @@ class ArtifactTest(unittest.TestCase):
             },
         )
 
+    def test_non_meningitis_does_not_replace_unspecified_context(self):
+        if self.metadata["packageVersion"] == "2026.1":
+            self.skipTest("Legacy artifact predates explicit indication")
+        rules = list(csv.DictReader(io.StringIO(self.payload["breakpoints.csv"].decode())))
+        if self.metadata["packageId"] != "amr-reference-eucast":
+            self.skipTest("EUCAST clinical context regression")
+        for agent in ("CRO", "CIP", "MEM"):
+            selected = [r for r in rules if r["organism_code"] == "B_ESCHR_COLI"
+                        and r["antibiotic_code"] == agent and r["method"] == "MIC"
+                        and r["version"].startswith("2026-")]
+            by_context = {r["clinical_context"]: r for r in selected}
+            self.assertEqual("", by_context[""]["susceptible_value"])
+            self.assertTrue(by_context["NON_MENINGITIS"]["susceptible_value"])
+            self.assertTrue(by_context["NON_MENINGITIS"]["resistant_value"])
+
     def test_zip_is_reproducible_despite_file_times_and_order(self):
         rebuilt = self.repack(
             lambda directory: [
