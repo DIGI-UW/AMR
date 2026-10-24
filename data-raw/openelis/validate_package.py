@@ -111,6 +111,7 @@ def validate(content):
         and len(organisms) > 5,
         "Organism inventory mismatch",
     )
+    require(all("organism_group" in row for row in organisms), "Organism group column missing")
     require(
         len(agent_codes) == len(agents) and agents,
         "Duplicate or empty antimicrobial inventory",
@@ -179,13 +180,20 @@ def validate(content):
             ),
             "Unsupported context",
         )
+        require("disk_content" in row, "Disk content column missing")
+        require(row["method"] == "ZONE" or not row["disk_content"], "MIC rule has a disk content")
         if not row["susceptible_value"] and not row["resistant_value"]:
             require("NO_BREAKPOINT:" in row["notes"], "Blocking rule needs a reason")
             rules[key] = None
             continue
         susceptible, resistant = number(row["susceptible_value"]), number(row["resistant_value"])
-        require(row["method"] == "MIC" and Decimal("0.001") < susceptible <= resistant,
-                "Invalid supported thresholds")
+        if row["method"] == "MIC":
+            require(Decimal("0.001") < susceptible <= resistant, "Invalid supported thresholds")
+        else:
+            # A zone rule is valid only for the disk content it was published for.
+            require(row["disk_content"], "Zone rule without disk content")
+            require(0 < resistant <= susceptible and susceptible == susceptible.to_integral_value()
+                    and resistant == resistant.to_integral_value(), "Invalid supported thresholds")
         require(all(value.as_tuple().exponent >= -4 and value < 10**8
                     for value in (susceptible, resistant)), "Threshold exceeds receiving precision")
         rules[key] = (susceptible, resistant)
@@ -209,6 +217,12 @@ def validate(content):
             require(row["expected"] == "NO_BREAKPOINT", "Blocked context has an interpretation")
             continue
         susceptible, resistant = rules[key]
+        if key[3] == "ZONE":
+            expected = "S" if value >= susceptible else "R" if (
+                value <= resistant if publisher == "CLSI" else value < resistant
+            ) else "I"
+            require(row["expected"] == expected, "AMR vector differs from translated threshold")
+            continue
         evaluated = value
         if publisher == "CLSI":
             # The source engine rounds measured MICs up to the next twofold dilution.
@@ -226,8 +240,9 @@ def validate(content):
         if rules[key] is None:
             continue
         susceptible, resistant = rules[key]
+        low, high = min(susceptible, resistant), max(susceptible, resistant)
         require(susceptible in values and resistant in values
-                and any(x < susceptible for x in values) and any(x > resistant for x in values),
+                and any(x < low for x in values) and any(x > high for x in values),
                 "Missing boundary vectors")
     source_rows = tables["source-rows.csv"]
     source_ids = {row["source_row"] for row in source_rows}

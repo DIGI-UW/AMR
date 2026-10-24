@@ -123,6 +123,37 @@ class ArtifactTest(unittest.TestCase):
             self.assertTrue(by_context["NON_MENINGITIS"]["susceptible_value"])
             self.assertTrue(by_context["NON_MENINGITIS"]["resistant_value"])
 
+    def rules(self):
+        rules = list(csv.DictReader(io.StringIO(self.payload["breakpoints.csv"].decode())))
+        if "disk_content" not in rules[0]:
+            self.skipTest("Legacy artifact predates disk content")
+        return rules
+
+    def test_supported_zone_rules_name_their_disk_content(self):
+        zones = [r for r in self.rules() if r["method"] == "ZONE" and r["susceptible_value"]]
+        self.assertTrue(zones, "No zone rule is interpretable")
+        self.assertTrue(all(r["disk_content"] for r in zones))
+        self.assertTrue(all(not r["disk_content"] for r in self.rules() if r["method"] == "MIC"))
+        ceftriaxone = [r for r in zones if r["organism_code"] == "B_ESCHR_COLI"
+                       and r["antibiotic_code"] == "CRO" and r["version"].startswith("2026-")]
+        self.assertEqual(1, len(ceftriaxone))
+
+    def test_zone_rule_without_disk_content_is_rejected(self):
+        self.rules()
+
+        def mutate(rows):
+            next(r for r in rows if r["method"] == "ZONE" and r["susceptible_value"])["disk_content"] = ""
+
+        content = self.repack(lambda d: self.change_csv(d, "breakpoints.csv", mutate))
+        with self.assertRaisesRegex(ValueError, "Zone rule without disk content"):
+            validate(content)
+
+    def test_organisms_carry_their_breakpoint_group(self):
+        organisms = {r["code"]: r for r in csv.DictReader(io.StringIO(self.payload["organisms.csv"].decode()))}
+        if "organism_group" not in next(iter(organisms.values())):
+            self.skipTest("Legacy artifact predates organism group")
+        self.assertEqual("Enterobacterales", organisms["B_ESCHR_COLI"]["organism_group"])
+
     def test_zip_is_reproducible_despite_file_times_and_order(self):
         rebuilt = self.repack(
             lambda directory: [

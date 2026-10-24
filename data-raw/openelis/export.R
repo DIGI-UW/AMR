@@ -97,8 +97,13 @@ for (code in organism_codes) {
         if (mic_method && any(best$breakpoint_S <= 0.001, na.rm = TRUE)) reason <- "no_susceptible_category"
         if (reason == "" && (!is.finite(s) || !is.finite(r) || s <= 0 || r <= 0 ||
             (mic_method && s > r) || (!mic_method && s < r))) reason <- "unrepresentable_thresholds"
-        if (reason == "" && !mic_method) reason <- "disk_content_context_not_supported"
-        if (reason == "") {
+        # A zone breakpoint holds only for the disk content it was set for.
+        disk <- unique(as.character(best$disk_dose[!empty(best$disk_dose)]))
+        if (reason == "" && !mic_method && length(disk) != 1L) reason <- "disk_content_missing_or_ambiguous"
+        if (reason == "" && !mic_method) {
+          points <- sort(unique(c(s, r, s - 1, s + 1, r - 1, r + 1, 6:50)))
+          points <- points[is.finite(points) & points >= 0 & points == round(points)]
+        } else if (reason == "") {
           points <- unique(c(s, r, 2^(-10:10), 1.5, 3, 6, 12))
           for (boundary in c(s, r)) {
             points <- c(points, tail(valid_mic[valid_mic < boundary], 1L), head(valid_mic[valid_mic > boundary], 1L))
@@ -116,6 +121,7 @@ for (code in organism_codes) {
           organism_or_group = organism$fullname, antibiotic_whonet_code = agent,
           method = if (mic_method) "MIC" else "ZONE", specimen_type_id = "",
           breakpoint_type = if (mic_method) "MIC" else "ZONE",
+          disk_content = if (!mic_method && length(disk) == 1L) disk else "",
           susceptible_value = if (reason == "") s else NA_real_, intermediate_lower_value = "", intermediate_upper_value = "",
           resistant_value = if (reason == "") r else NA_real_,
           units = if (mic_method) "mg/L" else "mm",
@@ -155,34 +161,48 @@ for (guideline in guidelines) {
   selected <- which(checks$publisher == publisher & checks$version == edition & checks$expected == "PENDING")
   if (!length(selected)) next
   values <- checks$value[selected]
+  is_mic <- checks$method[selected] == "MIC"
+  interpret <- function(observed, indices) as.character(suppressMessages(suppressWarnings(as.sir(
+    observed,
+    mo = checks$organism_code[indices],
+    ab = checks$antibiotic_code[indices],
+    guideline = guideline,
+    uti = FALSE,
+    include_screening = FALSE,
+    include_PKPD = FALSE,
+    add_intrinsic_resistance = FALSE,
+    info = FALSE
+  ))))
   # The public interpreter appends every observation to its session history.
   # Bounded batches avoid repeatedly copying the entire edition's history.
   expected <- character(length(selected))
   for (batch in split(seq_along(selected), ceiling(seq_along(selected) / 1000L))) {
-    invisible(sir_interpretation_history(clean = TRUE))
-    indices <- selected[batch]
-    expected[batch] <- as.character(suppressMessages(suppressWarnings(as.sir(
-      as.mic(checks$value[indices]),
-      mo = checks$organism_code[indices],
-      ab = checks$antibiotic_code[indices],
-      guideline = guideline,
-      uti = FALSE,
-      include_screening = FALSE,
-      include_PKPD = FALSE,
-      add_intrinsic_resistance = FALSE,
-      info = FALSE
-    ))))
+    mic_part <- batch[is_mic[batch]]
+    zone_part <- batch[!is_mic[batch]]
+    if (length(mic_part)) {
+      invisible(sir_interpretation_history(clean = TRUE))
+      expected[mic_part] <- interpret(as.mic(values[mic_part]), selected[mic_part])
+    }
+    if (length(zone_part)) {
+      invisible(sir_interpretation_history(clean = TRUE))
+      expected[zone_part] <- interpret(as.disk(values[zone_part]), selected[zone_part])
+    }
   }
   invisible(sir_interpretation_history(clean = TRUE))
   matched <- match(check_keys[selected], rule_keys)
   evaluated <- values
   if (publisher == "CLSI") {
     ladder <- as.numeric(AMR:::COMMON_MIC_VALUES)
-    evaluated <- vapply(values, function(x) if (any(ladder >= x)) min(ladder[ladder >= x]) else x, numeric(1))
+    evaluated[is_mic] <- vapply(values[is_mic], function(x) if (any(ladder >= x)) min(ladder[ladder >= x]) else x, numeric(1))
   }
-  translated <- ifelse(evaluated <= rules$susceptible_value[matched], "S",
-    ifelse(if (publisher == "CLSI") evaluated >= rules$resistant_value[matched]
-      else evaluated > rules$resistant_value[matched], "R", "I"))
+  susceptible <- rules$susceptible_value[matched]
+  resistant <- rules$resistant_value[matched]
+  # MIC: lower is more susceptible. Zone: a larger diameter is more susceptible.
+  translated <- ifelse(is_mic,
+    ifelse(evaluated <= susceptible, "S",
+      ifelse(if (publisher == "CLSI") evaluated >= resistant else evaluated > resistant, "R", "I")),
+    ifelse(evaluated >= susceptible, "S",
+      ifelse(if (publisher == "CLSI") evaluated <= resistant else evaluated < resistant, "R", "I")))
   mismatch <- is.na(expected) | expected != translated
   blocked <- unique(check_keys[selected][mismatch])
   if (length(blocked)) {
@@ -207,10 +227,26 @@ whonet <- vapply(seq_len(nrow(organisms)), function(i) {
   )])
   if (length(unique(matches)) == 1L) tolower(matches[1]) else ""
 }, character(1))
+# The nearest group above species that breakpoint rules target for each
+# organism: a named group (for example Streptococcus Group A), else its genus,
+# family, order or class. Blank when no rule targets any of them.
+targets <- unique(as.character(bp$mo))
+organism_group <- vapply(organism_codes, function(code) {
+  groups <- unique(as.character(microorganisms.groups$mo_group[as.character(microorganisms.groups$mo) == code]))
+  groups <- groups[groups %in% targets]
+  if (length(groups) == 1L) return(as.character(mo$fullname[match(groups, as.character(mo$mo))]))
+  row <- mo[match(code, as.character(mo$mo)), , drop = FALSE]
+  for (rank in c("genus", "family", "order", "class")) {
+    name <- as.character(row[[rank]])
+    if (empty(name) || name == as.character(row$fullname)) next
+    if (as.character(mo$mo[match(name, mo$fullname)]) %in% targets) return(name)
+  }
+  ""
+}, character(1), USE.NAMES = FALSE)
 write_csv(
   data.frame(
     source = "AMR", code = organism_codes, displayName = organisms$fullname,
-    whonetCode = whonet,
+    whonetCode = whonet, organism_group = organism_group,
     gramStain = toupper(gsub("-", "_", mo_gramstain(organism_codes, language = "en"))),
     stringsAsFactors = FALSE
   ),

@@ -29,7 +29,7 @@ AMR's actual `as.sir()` using its normal source data and matching logic.
 The exporter writes explicit empty rules for unsupported contexts. These return
 **No breakpoint** and prevent a broad numeric fallback. Coverage records explain:
 
-- Disk diffusion, until the receiving workflow can enforce disk content.
+- Disk diffusion when the source gives no single disk content for the rule.
 - Site, route, urinary-tract conditions and conditional notes, except the exact
   `Non-meningitis` MIC context described below.
 - Susceptible-dose-dependent, incomplete and no-susceptible-category rules.
@@ -51,6 +51,21 @@ blocked. The same source-interpreter verification applies to these numeric rules
 The receiving workflow must explicitly record that indication on the run; it must
 not infer it from a blood specimen or use these rows when context is unspecified.
 Existing package versions are immutable; this support requires a new release.
+
+## Disk content and organism groups
+
+A zone breakpoint holds only for the disk content it was published for. Each
+zone row carries that content in `disk_content`, spelled as the source spells it
+(for example `30 mcg`), and is blank for MIC rows. A receiving system must
+interpret a zone reading only against a rule with the same disk content.
+Zone rules are verified against the source interpreter the same way as MIC
+rules: a larger zone is more susceptible, CLSI's resistant boundary is
+inclusive and EUCAST's is strict.
+
+`organisms.csv` carries `organism_group`: the nearest group above species that
+breakpoint rules target, either a named group (for example Beta-haemolytic
+Streptococcus) or the genus, family, order or class. It is blank when no rule
+targets any of them.
 
 ## Build and validate
 
