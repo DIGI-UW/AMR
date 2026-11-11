@@ -68,8 +68,11 @@ def git(*args):
 
 
 def validate_scope(scope):
-    if set(scope) != {"guidelines", "organisms", "methods"}:
+    if set(scope) - {"organismList"} != {"guidelines", "organisms", "methods"}:
         raise ValueError("Scope requires guidelines, organisms and methods")
+    # Which organisms are listed as concepts; rules are expanded for the rule scope only.
+    if scope.get("organismList", "rule-scope") not in ("rule-scope", "accepted-taxa"):
+        raise ValueError("organismList must be rule-scope or accepted-taxa")
     if scope["methods"] != ["MIC", "ZONE"]:
         raise ValueError("Scope must account for MIC and ZONE contexts")
     if scope["guidelines"] not in (["EUCAST 2025", "EUCAST 2026"], ["CLSI 2025", "CLSI 2026"]):
@@ -109,6 +112,7 @@ def build(args):
         (work / "organisms.txt").write_text(
             scope["organisms"] + "\n"
         )
+        organism_list = scope.get("organismList", "rule-scope")
         (work / "guidelines.txt").write_text(
             "\n".join(sorted(set(scope["guidelines"]))) + "\n"
         )
@@ -150,6 +154,7 @@ def build(args):
                     "/work/guidelines.txt",
                     args.package_version,
                     "/work/artifact",
+                    organism_list,
                 ],
                 check=True,
             )
@@ -176,6 +181,7 @@ def build(args):
                     str(work / "guidelines.txt"),
                     args.package_version,
                     str(output),
+                    organism_list,
                 ],
                 check=True,
             )

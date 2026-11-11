@@ -1,6 +1,6 @@
 # Translate the declared human reference scope; never guess a clinical context.
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) != 5L) stop("Expected: library, organisms, guidelines, version, output")
+if (length(args) != 6L) stop("Expected: library, organisms, guidelines, version, output, organism list")
 .libPaths(c(args[1], .libPaths()))
 suppressPackageStartupMessages(library(AMR))
 Sys.setlocale("LC_COLLATE", "C")
@@ -9,6 +9,8 @@ organism_codes <- sort(unique(readLines(args[2])))
 guidelines <- sort(unique(readLines(args[3])))
 version <- args[4]
 out <- args[5]
+organism_list <- args[6]
+if (!organism_list %in% c("rule-scope", "accepted-taxa")) stop("Unknown organism list")
 mo <- as.data.frame(microorganisms, stringsAsFactors = FALSE)
 ab <- as.data.frame(antimicrobials, stringsAsFactors = FALSE)
 bp <- as.data.frame(clinical_breakpoints, stringsAsFactors = FALSE)
@@ -218,36 +220,50 @@ for (guideline in guidelines) {
 }
 if (any(checks$expected == "PENDING" | is.na(checks$expected))) stop("Unverified rule")
 if (!all(paste(sub("^[A-Z]+ ", "", guidelines), version, sep = "-") %in% rules$version)) stop("An edition has no rules")
-organisms <- mo[match(organism_codes, as.character(mo$mo)), , drop = FALSE]
-whonet <- vapply(seq_len(nrow(organisms)), function(i) {
-  codes <- microorganisms.codes
-  matches <- as.character(codes$code[which(
-    as.character(codes$mo) == organism_codes[i] &
-      codes$source == paste0("WHONET (", organisms$fullname[i], ")")
-  )])
-  if (length(unique(matches)) == 1L) tolower(matches[1]) else ""
-}, character(1))
+# Breakpoint rules stay expanded for the rule scope only. The concept list can be
+# every accepted taxon, so an identification outside the rule scope is still a
+# known organism that reads "No breakpoint", not a missing choice.
+listed_codes <- organism_codes
+if (organism_list == "accepted-taxa") {
+  listed_codes <- sort(unique(c(organism_codes, as.character(mo$mo[mo$status == "accepted"]))))
+}
+organisms <- mo[match(listed_codes, as.character(mo$mo)), , drop = FALSE]
+# WHONET labels its genus-level entry "<genus> sp."; every other entry carries the
+# taxon's own name. A label that names more than one code is not used.
+labelled <- microorganisms.codes[grepl("^WHONET \\(.*\\)$", microorganisms.codes$source), , drop = FALSE]
+label_keys <- paste(as.character(labelled$mo), sub("^WHONET \\((.*)\\)$", "\\1", labelled$source), sep = "|")
+ambiguous <- unique(label_keys[duplicated(label_keys)])
+own_name <- paste(listed_codes, organisms$fullname, sep = "|")
+genus_name <- ifelse(organisms$rank == "genus", paste0(own_name, " sp."), NA_character_)
+whonet_row <- match(genus_name, label_keys)
+whonet_row[is.na(whonet_row)] <- match(own_name, label_keys)[is.na(whonet_row)]
+whonet_row[label_keys[whonet_row] %in% ambiguous] <- NA_integer_
+whonet <- ifelse(is.na(whonet_row), "", tolower(as.character(labelled$code[whonet_row])))
+whonet_name <- ifelse(is.na(whonet_row), "", sub("^[^|]*\\|", "", label_keys[whonet_row]))
+if (anyDuplicated(whonet[whonet != ""])) stop("A WHONET code names two organisms")
 # The nearest group above species that breakpoint rules target for each
 # organism: a named group (for example Streptococcus Group A), else its genus,
 # family, order or class. Blank when no rule targets any of them.
 targets <- unique(as.character(bp$mo))
-organism_group <- vapply(organism_codes, function(code) {
-  groups <- unique(as.character(microorganisms.groups$mo_group[as.character(microorganisms.groups$mo) == code]))
-  groups <- groups[groups %in% targets]
+target_names <- as.character(mo$fullname[match(targets, as.character(mo$mo))])
+targeted_groups <- microorganisms.groups[as.character(microorganisms.groups$mo_group) %in% targets, , drop = FALSE]
+groups_by_member <- split(as.character(targeted_groups$mo_group), as.character(targeted_groups$mo))
+organism_group <- vapply(seq_along(listed_codes), function(i) {
+  groups <- unique(groups_by_member[[listed_codes[i]]])
   if (length(groups) == 1L) return(as.character(mo$fullname[match(groups, as.character(mo$mo))]))
-  row <- mo[match(code, as.character(mo$mo)), , drop = FALSE]
   for (rank in c("genus", "family", "order", "class")) {
-    name <- as.character(row[[rank]])
-    if (empty(name) || name == as.character(row$fullname)) next
-    if (as.character(mo$mo[match(name, mo$fullname)]) %in% targets) return(name)
+    name <- as.character(organisms[[rank]][i])
+    if (empty(name) || name == as.character(organisms$fullname[i])) next
+    if (name %in% target_names) return(name)
   }
   ""
 }, character(1), USE.NAMES = FALSE)
 write_csv(
   data.frame(
-    source = "AMR", code = organism_codes, displayName = organisms$fullname,
-    whonetCode = whonet, organism_group = organism_group,
-    gramStain = toupper(gsub("-", "_", mo_gramstain(organism_codes, language = "en"))),
+    source = "AMR", code = listed_codes, displayName = organisms$fullname,
+    whonetCode = whonet, whonetName = whonet_name, organism_group = organism_group,
+    gramStain = toupper(gsub("-", "_", mo_gramstain(listed_codes, language = "en"))),
+    rank = organisms$rank, prevalence = organisms$prevalence,
     stringsAsFactors = FALSE
   ),
   "organisms.csv"

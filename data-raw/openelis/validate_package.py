@@ -112,6 +112,20 @@ def validate(content):
         "Organism inventory mismatch",
     )
     require(all("organism_group" in row for row in organisms), "Organism group column missing")
+    if "whonetName" in organisms[0]:
+        coded = [row for row in organisms if row["whonetCode"]]
+        require(
+            all(bool(row["whonetCode"]) == bool(row["whonetName"]) for row in organisms),
+            "WHONET code without its WHONET name",
+        )
+        require(
+            len({row["whonetCode"].lower() for row in coded}) == len(coded),
+            "A WHONET code names two organisms",
+        )
+    names = [row["displayName"].lower() for row in organisms]
+    require(len(set(names)) == len(names), "Two organisms share a display name")
+    if scope.get("organismList", "rule-scope") == "accepted-taxa":
+        require(len(organisms) > 50000, "Accepted-taxa list is incomplete")
     require(
         len(agent_codes) == len(agents) and agents,
         "Duplicate or empty antimicrobial inventory",

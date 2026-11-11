@@ -11,9 +11,15 @@ The scope is **human EUCAST 2025/2026 and CLSI 2025/2026**, built separately.
 There is no rolling latest-year selection. Veterinary standards, epidemiological
 cutoffs and expert rules are outside this release.
 
-`human-breakpoint-taxa` includes every organism target in the selected source
-editions, plus accepted species of common human prevalence beneath those targets that
-have WHONET mappings in the source.
+Two scope settings choose organisms. `organisms: human-breakpoint-taxa` is the
+**rule scope**: every organism target in the selected source editions, plus
+accepted species of common human prevalence beneath those targets that have
+WHONET mappings in the source. Breakpoint rules are expanded for these organisms
+only. `organismList` chooses which organisms are **listed as concepts**:
+`rule-scope` lists the rule scope alone; `accepted-taxa` also lists every taxon
+the source marks accepted (about 70,000), so a laboratory can record any
+identification. A listed organism outside the rule scope has no rule of its own
+and reads No breakpoint. Synonyms are not listed.
 Taxonomic ancestry and group membership come from the same pinned AMR revision.
 All antimicrobial concepts referenced by candidate contexts are included, even
 when a particular context cannot produce an interpretation. WHONET mappings use
@@ -66,6 +72,16 @@ inclusive and EUCAST's is strict.
 breakpoint rules target, either a named group (for example Beta-haemolytic
 Streptococcus) or the genus, family, order or class. It is blank when no rule
 targets any of them.
+
+## WHONET codes and names
+
+`whonetCode` and `whonetName` come from the source's WHONET-labelled codes. A
+genus takes the code WHONET labels `<genus> sp.` (for example `kl-`,
+`Klebsiella sp.`), the entry a laboratory uses when it has not identified the
+species. Every other organism takes the code labelled with its own name. A label
+that fits neither rule, or that names more than one code, leaves both columns
+blank; nothing is matched by similarity. `rank` and `prevalence` are the
+source's values, for ordering and filtering organism searches.
 
 ## Build and validate
 

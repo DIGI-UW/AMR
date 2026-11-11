@@ -56,6 +56,7 @@ class ScopeTest(unittest.TestCase):
             {"methods": ["DISK"]},
             {"organisms": ["B_ESCHR_COLI", "B_ESCHR_COLI"]},
             {"organisms": []},
+            {"organismList": "everything"},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 validate_scope({**scope, **changes})
@@ -153,6 +154,52 @@ class ArtifactTest(unittest.TestCase):
         if "organism_group" not in next(iter(organisms.values())):
             self.skipTest("Legacy artifact predates organism group")
         self.assertEqual("Enterobacterales", organisms["B_ESCHR_COLI"]["organism_group"])
+
+    def organisms(self):
+        organisms = {r["code"]: r for r in csv.DictReader(io.StringIO(self.payload["organisms.csv"].decode()))}
+        if "whonetName" not in next(iter(organisms.values())):
+            self.skipTest("Legacy artifact predates WHONET names")
+        return organisms
+
+    def test_genus_entries_carry_the_whonet_code_and_name(self):
+        organisms = self.organisms()
+        for code, whonet, name in (
+            ("B_KLBSL", "kl-", "Klebsiella sp."),
+            ("B_ESCHR", "esc", "Escherichia sp."),
+            ("B_STPHY", "sta", "Staphylococcus sp."),
+        ):
+            with self.subTest(code=code):
+                self.assertEqual("genus", organisms[code]["rank"])
+                self.assertEqual(whonet, organisms[code]["whonetCode"])
+                self.assertEqual(name, organisms[code]["whonetName"])
+        self.assertEqual("eco", organisms["B_ESCHR_COLI"]["whonetCode"])
+        self.assertEqual("Escherichia coli", organisms["B_ESCHR_COLI"]["whonetName"])
+        # WHONET's only genus label here is a diphtheroid subset, so no code is guessed.
+        self.assertEqual("", organisms["B_CRYNB"]["whonetCode"])
+
+    def test_every_accepted_organism_is_listed_but_rules_stay_in_scope(self):
+        organisms = self.organisms()
+        if self.metadata["scope"].get("organismList") != "accepted-taxa":
+            self.skipTest("Rule-scope organism list")
+        self.assertGreater(len(organisms), 50000)
+        ruled = {r["organism_code"] for r in self.rules()}
+        self.assertLess(len(ruled), 1000)
+        self.assertTrue(ruled <= set(organisms))
+        # A rare species beneath a breakpoint genus is listed with its group and no rule of its own.
+        rare = next(r for r in organisms.values() if r["rank"] == "species"
+                    and r["prevalence"] == "2" and r["organism_group"] and r["code"] not in ruled)
+        self.assertTrue(rare["displayName"])
+
+    def test_two_organisms_cannot_share_a_whonet_code(self):
+        self.organisms()
+
+        def mutate(rows):
+            coded = [r for r in rows if r["whonetCode"]]
+            coded[1]["whonetCode"] = coded[0]["whonetCode"]
+
+        content = self.repack(lambda d: self.change_csv(d, "organisms.csv", mutate))
+        with self.assertRaisesRegex(ValueError, "names two organisms"):
+            validate(content)
 
     def test_zip_is_reproducible_despite_file_times_and_order(self):
         rebuilt = self.repack(
