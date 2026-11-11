@@ -1,95 +1,54 @@
 name: OpenELIS reference distribution
 
+# A pull request builds each package once and tests it. Pushing a tag
+# openelis-reference-<version> builds, tests and publishes that version.
 on:
   pull_request:
     paths: ['data-raw/openelis/**', '.github/workflows/openelis-reference.yml']
   push:
-    branches: [main]
-    paths: ['data-raw/openelis/**', '.github/workflows/openelis-reference.yml']
-  workflow_dispatch:
-    inputs:
-      package_version:
-        description: 'Immutable metadata version'
-        required: true
-        default: '2026.3'
-      source_commit:
-        description: 'Full pinned AMR data commit'
-        required: true
-        default: '5fc152ae947240b03dd1085fb4ff1bc0df3137a1'
-      publish:
-        description: 'Publish verified packages to GHCR (main only)'
-        type: boolean
-        default: false
+    tags: ['openelis-reference-*']
 
 permissions:
   contents: read
 
-env:
-  PACKAGE_VERSION: ${{ inputs.package_version || '2026.3' }}
-  SOURCE_COMMIT: ${{ inputs.source_commit || '5fc152ae947240b03dd1085fb4ff1bc0df3137a1' }}
-
 jobs:
-  validate:
-    timeout-minutes: 90
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        publisher: [eucast, clsi]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Fetch pinned data
-        run: |
-          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          git fetch --depth=1 origin "$SOURCE_COMMIT"
-      - name: Build twice and compare bytes
-        env:
-          PUBLISHER: ${{ matrix.publisher }}
-        run: |
-          scope=data-raw/openelis/scope.json
-          if [ "$PUBLISHER" = clsi ]; then scope=data-raw/openelis/scope-clsi.json; fi
-          for build in first second; do
-            python3 data-raw/openelis/build_package.py --scope "$scope" --source-ref "$SOURCE_COMMIT" --package-version "$PACKAGE_VERSION" --runtime docker --output "dist/$build/package.zip"
-          done
-          cmp dist/first/package.zip dist/second/package.zip
-      - name: Verify archive and failure cases against real data
-        env:
-          AMR_REFERENCE_ARTIFACT: dist/first/package.zip
-        run: python3 -m unittest discover -s data-raw/openelis -p 'test_*.py' -v
-
-  publish:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
-    needs: validate
-    timeout-minutes: 45
+  package:
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         publisher: [eucast, clsi]
     env:
       PUBLISHER: ${{ matrix.publisher }}
-      GH_TOKEN: ${{ github.token }}
+      RELEASE: ${{ startsWith(github.ref, 'refs/tags/openelis-reference-') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
-        with:
-          version: '1.3.5'
-      - name: Rebuild verified source revision
+      - name: Build from this commit
         run: |
-          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          git fetch --depth=1 origin "$SOURCE_COMMIT"
+          version=0.0
+          if [ "$RELEASE" = true ]; then version="${GITHUB_REF_NAME#openelis-reference-}"; fi
           scope=data-raw/openelis/scope.json
           if [ "$PUBLISHER" = clsi ]; then scope=data-raw/openelis/scope-clsi.json; fi
-          python3 data-raw/openelis/build_package.py --scope "$scope" --source-ref "$SOURCE_COMMIT" --package-version "$PACKAGE_VERSION" --runtime docker --output dist/package.zip
-      - name: Publish immutable GHCR data artifact
+          python3 data-raw/openelis/build_package.py --scope "$scope" --source-ref "$(git rev-parse HEAD)" --package-version "$version" --runtime docker --output dist/package.zip
+      - name: Test the package
+        env:
+          AMR_REFERENCE_ARTIFACT: dist/package.zip
+        run: python3 -m unittest discover -s data-raw/openelis -p 'test_*.py' -v
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
+        if: env.RELEASE == 'true'
+        with:
+          version: '1.3.5'
+      - name: Publish the version this tag names
+        if: env.RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           python3 data-raw/openelis/publish_package.py dist/package.zip --repository "ghcr.io/digi-uw/amr-reference-$PUBLISHER"

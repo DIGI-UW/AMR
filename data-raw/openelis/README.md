@@ -83,35 +83,34 @@ that fits neither rule, or that names more than one code, leaves both columns
 blank; nothing is matched by similarity. `rank` and `prevalence` are the
 source's values, for ordering and filtering organism searches.
 
-## Build and validate
+## Build and test
 
-Use Git, Python 3.12+ and Docker. The builder installs the exact source revision
-in an isolated library using a digest-pinned R image, without container network
-access or third-party R/Python dependencies.
+Use Git, Python 3.12+ and Docker. The builder installs the commit it is given in
+an isolated library using a digest-pinned R image, without container network
+access or third-party R/Python dependencies. The data and the exporter come from
+that one commit.
 
 ```sh
 python3 data-raw/openelis/build_package.py \
-  --source-ref 5fc152ae947240b03dd1085fb4ff1bc0df3137a1 \
-  --package-version 2026.1 --runtime docker \
-  --output dist/amr-reference-eucast-2026.1.zip
+  --source-ref "$(git rev-parse HEAD)" \
+  --package-version 0.0 --runtime docker \
+  --output dist/amr-reference-eucast.zip
 
-# Build CLSI separately with its own immutable deployment pin.
+# CLSI is a separate package with its own deployment pin.
 python3 data-raw/openelis/build_package.py \
   --scope data-raw/openelis/scope-clsi.json \
-  --source-ref 5fc152ae947240b03dd1085fb4ff1bc0df3137a1 \
-  --package-version 2026.1 --runtime docker \
-  --output dist/amr-reference-clsi-2026.1.zip
+  --source-ref "$(git rev-parse HEAD)" \
+  --package-version 0.0 --runtime docker \
+  --output dist/amr-reference-clsi.zip
 
-AMR_REFERENCE_ARTIFACT=dist/amr-reference-eucast-2026.1.zip \
+AMR_REFERENCE_ARTIFACT=dist/amr-reference-eucast.zip \
   python3 -m unittest discover -s data-raw/openelis -p 'test_*.py' -v
 ```
 
-Run the artifact tests for each publisher. Source refs must be full commit IDs.
-`--runtime local` is a development convenience; release builds use pinned Docker.
-Build to two different paths and compare bytes. Stable ordering, fixed ZIP times
-and permissions, canonical JSON and no build timestamp make output reproducible.
-A changed dataset, scope or exporter requires a new package version. Never replace
-an existing release. New edition identities preserve earlier result references.
+Run the package tests for each publisher. `--runtime local` is a development
+convenience; release builds use pinned Docker. A changed dataset, scope or
+exporter requires a new package version. Never replace an existing release. New
+edition identities preserve earlier result references.
 
 ## Package layout
 
@@ -148,10 +147,19 @@ to unrelated release evidence do not change that edition's content identity.
 
 ## GHCR publication and deployment pins
 
-The workflow builds each publisher twice and tests the results. After merge,
-manually run it on main with `publish` enabled, an explicit source commit and a
-new version. It publishes OCI data artifacts with one `application/zip` layer
-using ORAS. Existing version tags are immutable.
+A pull request that changes the exporter builds each package once and runs the
+package tests. Nothing runs on merge.
+
+To release, tag the commit on main and push the tag. The tag names the version:
+
+```sh
+git tag openelis-reference-2026.3 && git push origin openelis-reference-2026.3
+```
+
+The workflow builds both packages from the tagged commit, tests them and
+publishes them as OCI data artifacts with one `application/zip` layer using
+ORAS. Existing versions are immutable; a tag for a published version fails.
+Versions 2026.1 and 2026.2 were published before this flow and have no tag.
 
 Both packages must be **public** in GHCR, independently of their source
 repository visibility. The publisher checks this before and after uploading.
